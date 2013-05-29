@@ -13,7 +13,6 @@
   (log (prettify obj)))
 
 (strokes/bootstrap)
-; (patch-args-keyword-to-fn (-> d3 .-selection .-prototype) "attr" 2)
     
 (def tree-canvas-width 1280)
 (def tree-canvas-height 800)
@@ -22,13 +21,10 @@
 (def tree-height (- tree-canvas-height (margin :top) (margin :bottom)))
 
 
-
-
 (def vertical {:x-prop "x" :y-prop "y" :x0-prop "x0" :y0-prop "y0" :dx-prop "dx"})
 (def horizontal {:x-prop "y" :y-prop "x" :x0-prop "y0" :y0-prop "x0" :dx-prop "dy"})
 
 (def orientation vertical)
-
 
 
 (def line (-> d3 (.-svg) (.line) (.x (fn [d] (aget d (orientation :x-prop)))) (.y (fn [d] (aget d (orientation :y-prop))))))
@@ -90,6 +86,7 @@
                 make-node
                 root)))
 
+;; redraw refactoring as in http://weblog.bocoup.com/reusability-with-d3
 
 (defn redraw [source-node zipper tree]
   
@@ -101,91 +98,106 @@
         
         click-handler (fn [d] (toggle d) (redraw d zipper tree))
         
-;;  // Compute the new tree layout.
+        ;; Compute the new tree layout.
         nodes (.reverse ((aget tree "nodes") root))
-
-;;  // Update the nodes…
+        
+        ;; Update the nodes…
         node (-> tree-canvas (.selectAll "g.node")
                (.data nodes (fn [d]
                               (when (not (aget d "id"))
                                   (aset d "id" (get-next-node-id)))
                               (aget d "id"))))
 
-;;  // Enter any new nodes at source-node's previous position.
-        entering-nodes (-> node (.enter) (.append "svg:g")
-                    (.attr "class" "node")
-                    (.attr "transform" #(str "translate(" (aget source-node (orientation :x0-prop)) "," (aget source-node (orientation :y0-prop)) ")"))
-                    (.on "click" click-handler))
+        entering-nodes (-> node (.enter) (.append "svg:g"))
 
-;;  // Transition nodes to their new position.
-        updating-nodes (-> node (.transition)
-                     (.duration duration)
-                     (.attr "transform" #(str "translate(" (aget % (orientation :x-prop)) "," (aget % (orientation :y-prop)) ")")))
+        updating-nodes-transition (-> node (.transition))
 
-;;  // Transition exiting nodes to source-node's new position.
-        exiting-nodes (-> node (.exit) (.transition) ;; externed exit!
-                   (.duration duration)
-                   (.attr "transform" #(str "translate(" (aget source-node (orientation :x-prop)) "," (aget source-node (orientation :y-prop)) ")"))
-                   (.remove))
-
-;;  // Update the links…
+        exiting-nodes-transition (-> node (.exit) (.transition)) ;; externed exit!
+        
+        ;; Update the links…
         link (-> tree-canvas (.selectAll "path.link")
-               (.data (.links tree nodes) #(aget (aget % "target") "id")))]
-
-;;  // Normalize for fixed-depth.
-        (doseq [node nodes]
-          #(aset % (orientation :y-prop) (* (aget % "depth") 10)))
-
-
-        (-> entering-nodes (.append "svg:circle")
-          (.attr "r" 1e-6)
-          (.style "fill" #(if (aget % "hidden-children") "lightsteelblue" "#fff")))
-
-        (-> entering-nodes (.append "svg:text")
-          (.attr (orientation :y-prop) #(if (or (aget % "children") (aget % "hidden-children")) -10 10))
-          (.attr (orientation :dx-prop) ".35em")
-          (.attr "text-anchor" #(if (or (aget % "children") (aget % "hidden-children")) "end" "start"))
-          (.text #(aget % "name"))
-          (.style "fill-opacity" 1e-6))
-
-        (-> updating-nodes (.select "circle")
-          (.attr "r" 4.5)
-          (.style "fill" #(if (aget % "hidden-children") "lightsteelblue" "#fff")))
-
-        (-> updating-nodes (.select "text")
-          (.style "fill-opacity" 1))
-
-        (-> exiting-nodes (.select "circle")
-          (.attr "r" 1e-6))
-
-        (-> exiting-nodes (.select "text")
-          (.style "fill-opacity 1e-6"))
-
-;;  // Enter any new links at source-node's previous position.
-        (-> link (.enter) (.insert "svg:path" "g")
-          (.attr "class" "link")
-          (.attr "d" #(let [o (js-obj "x" (aget source-node "x0") "y" (aget source-node "y0"))]
-                        (draw-link (js-obj "source" o "target" o))))
-          (.transition)
-          (.duration duration)
-          (.attr "d" draw-link))
-
-;;  // Transition links to their new position.
-        (-> link (.transition)
-          (.duration duration)
-          (.attr "d" draw-link))
-
-;;  // Transition exiting nodes to source-node's new position.
-        (-> link (.exit) (.transition)
-          (.duration duration)
-          (.attr "d" #(let [o (js-obj "x" (aget source-node "x") "y" (aget source-node "y"))]
-                        (draw-link (js-obj "source" o "target" o))))
-          (.remove))
-
-;;  // Stash the old positions for transition.
-        (doseq [node nodes]
-          (aset node "x0" (aget node "x"))
-          (aset node "y0" (aget node "y")))))
+               (.data (.links tree nodes) #(aget (aget % "target") "id")))
+        
+        entering-links (-> link (.enter) (.insert "svg:path" "g"))
+        
+        entering-links-transition (-> entering-links (.transition))
+        
+        updating-links-transition (-> link (.transition))
+        
+        exiting-links-transition (-> link (.exit) (.transition))]
+    
+    
+    ;; Enter any new nodes at source-node's previous position.
+    (-> entering-nodes
+      (.attr "class" "node")
+      (.attr "transform" #(str "translate(" (aget source-node (orientation :x0-prop)) "," (aget source-node (orientation :y0-prop)) ")"))
+      (.on "click" click-handler))
+    
+    ;; Normalize for fixed-depth.
+    (doseq [node nodes]
+      #(aset % (orientation :y-prop) (* (aget % "depth") 10)))
+    
+    (-> entering-nodes (.append "svg:circle")
+      (.attr "r" 1e-6)
+      (.style "fill" #(if (aget % "hidden-children") "lightsteelblue" "#fff")))
+    
+    (-> entering-nodes (.append "svg:text")
+      (.attr (orientation :y-prop) #(if (or (aget % "children") (aget % "hidden-children")) -10 10))
+      (.attr (orientation :dx-prop) ".35em")
+      (.attr "text-anchor" #(if (or (aget % "children") (aget % "hidden-children")) "end" "start"))
+      (.text #(aget % "name"))
+      (.style "fill-opacity" 1e-6))
+    
+    ;; Transition nodes to their new position.
+    (-> updating-nodes-transition
+      (.duration duration)
+      (.attr "transform" #(str "translate(" (aget % (orientation :x-prop)) "," (aget % (orientation :y-prop)) ")")))
+    
+    (-> updating-nodes-transition (.select "circle")
+      (.attr "r" 4.5)
+      (.style "fill" #(if (aget % "hidden-children") "lightsteelblue" "#fff")))
+    
+    (-> updating-nodes-transition (.select "text")
+      (.style "fill-opacity" 1))
+    
+    ;; Transition exiting nodes to source-node's new position.
+    (-> exiting-nodes-transition 
+      (.duration duration)
+      (.attr "transform" #(str "translate(" (aget source-node (orientation :x-prop)) "," (aget source-node (orientation :y-prop)) ")"))
+      (.remove))
+    
+    (-> exiting-nodes-transition (.select "circle")
+      (.attr "r" 1e-6))
+    
+    (-> exiting-nodes-transition (.select "text")
+      (.style "fill-opacity 1e-6"))
+    
+    ;; Enter any new links at source-node's previous position.
+    (-> entering-links
+      (.attr "class" "link")
+      (.attr "d" #(let [o (js-obj "x" (aget source-node "x0") "y" (aget source-node "y0"))]
+                    (draw-link (js-obj "source" o "target" o)))))
+    
+    (-> entering-links-transition
+      (.duration duration)
+      (.attr "d" draw-link))
+    
+    ;; Transition links to their new position.
+    (-> updating-links-transition
+      (.duration duration)
+      (.attr "d" draw-link))
+    
+    ;; Transition exiting links to source-node's new position.
+    (-> exiting-links-transition
+      (.duration duration)
+      (.attr "d" #(let [o (js-obj "x" (aget source-node "x") "y" (aget source-node "y"))]
+                    (draw-link (js-obj "source" o "target" o))))
+      (.remove))
+    
+    ;; Stash the old positions for transition.
+    (doseq [node nodes]
+      (aset node "x0" (aget node "x"))
+      (aset node "y0" (aget node "y")))))
 
 
 
@@ -226,7 +238,7 @@
         tree (-> d3 (.-layout) (.tree)
                (.size (if (== orientation vertical) [tree-width tree-height] [tree-height tree-width])))]
     
-;;  Initialize the display to show a few nodes.
+    ; Initialize the display to show a few nodes.
     (doseq [child (aget root "children")]
       (toggle-all child))
     (let [child (aget (aget root "children") 1)]
