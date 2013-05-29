@@ -2,17 +2,25 @@
       (:require [clojure.zip :as zip]
                 [strokes :refer [d3]]))
 
+
 (defn log [& more]
-    (.log js/console (apply str more)))    
-    
+  (.log js/console (apply str more)))
+
+(defn prettify [obj]
+  (js/JSON.stringify obj nil 2))
+
+(defn jsonlog [obj]
+  (log (prettify obj)))
 
 (strokes/bootstrap)
+; (patch-args-keyword-to-fn (-> d3 .-selection .-prototype) "attr" 2)
     
-(def svg-width 1280)
-(def svg-height 800)
+(def tree-canvas-width 1280)
+(def tree-canvas-height 800)
 (def margin {:top 20 :left 120 :bottom 20 :right 120})
-(def tree-width (- svg-width (margin :left) (margin :right)))
-(def tree-height (- svg-height (margin :top) (margin :bottom)))
+(def tree-width (- tree-canvas-width (margin :left) (margin :right)))
+(def tree-height (- tree-canvas-height (margin :top) (margin :bottom)))
+
 
 
 
@@ -35,12 +43,17 @@
 (def draw-link line-segment)
 
 
-(def svg (-> d3 (.select "#body") (.append "svg:svg")
-           (.attr "width" svg-width)
-           (.attr "height" svg-height)
+(def tree-canvas (-> d3 (.select "#body") (.append "svg:svg")
+           (.attr "width" tree-canvas-width)
+           (.attr "height" tree-canvas-height)
            (.append "svg:g")
            (.attr "transform" (str "translate(" (margin :left) "," (margin :top) ")"))))
 
+(def control-canvas (-> d3 (.select "#body") (.append "svg:svg")
+           (.attr "width" (+ tree-canvas-width 500))
+           (.attr "height" tree-canvas-height)
+           (.append "svg:g")
+           (.attr "transform" (str "translate(" tree-canvas-width ",0)"))))
 
 (defn toggle [d]
   (if (aget d "children")
@@ -65,43 +78,58 @@
   next-node-id)
 
 
-(defn update [source root tree]
+(defn json-zip
+  [root]
+  (let [branch? (constantly true)
+        children (fn [obj] (seq (aget obj "children")))
+        make-node (fn [node children]
+                    (aset node "children" (and children (apply vector children)))
+                    node)]
+    (zip/zipper branch?
+                children
+                make-node
+                root)))
+
+
+(defn redraw [source-node zipper tree]
   
   (let [duration (if (and (aget d3 "event") (aget (aget d3 "event") "altKey"))
                    5000
                    500)
         
-        click-handler (fn [d] (toggle d) (update d root tree))
+        root (zip/root zipper)
+        
+        click-handler (fn [d] (toggle d) (redraw d zipper tree))
         
 ;;  // Compute the new tree layout.
         nodes (.reverse ((aget tree "nodes") root))
 
 ;;  // Update the nodes…
-        node (-> svg (.selectAll "g.node")
+        node (-> tree-canvas (.selectAll "g.node")
                (.data nodes (fn [d]
                               (when (not (aget d "id"))
                                   (aset d "id" (get-next-node-id)))
                               (aget d "id"))))
 
-;;  // Enter any new nodes at the parent's previous position.
-        nodeEnter (-> node (.enter) (.append "svg:g")
+;;  // Enter any new nodes at source-node's previous position.
+        entering-nodes (-> node (.enter) (.append "svg:g")
                     (.attr "class" "node")
-                    (.attr "transform" #(str "translate(" (aget source (orientation :x0-prop)) "," (aget source (orientation :y0-prop)) ")"))
+                    (.attr "transform" #(str "translate(" (aget source-node (orientation :x0-prop)) "," (aget source-node (orientation :y0-prop)) ")"))
                     (.on "click" click-handler))
 
 ;;  // Transition nodes to their new position.
-        nodeUpdate (-> node (.transition)
+        updating-nodes (-> node (.transition)
                      (.duration duration)
                      (.attr "transform" #(str "translate(" (aget % (orientation :x-prop)) "," (aget % (orientation :y-prop)) ")")))
 
-;;  // Transition exiting nodes to the parent's new position.
-        nodeExit (-> node (.exit) (.transition) ;; externed exit!
+;;  // Transition exiting nodes to source-node's new position.
+        exiting-nodes (-> node (.exit) (.transition) ;; externed exit!
                    (.duration duration)
-                   (.attr "transform" #(str "translate(" (aget source (orientation :x-prop)) "," (aget source (orientation :y-prop)) ")"))
+                   (.attr "transform" #(str "translate(" (aget source-node (orientation :x-prop)) "," (aget source-node (orientation :y-prop)) ")"))
                    (.remove))
 
 ;;  // Update the links…
-        link (-> svg (.selectAll "path.link")
+        link (-> tree-canvas (.selectAll "path.link")
                (.data (.links tree nodes) #(aget (aget % "target") "id")))]
 
 ;;  // Normalize for fixed-depth.
@@ -109,34 +137,34 @@
           #(aset % (orientation :y-prop) (* (aget % "depth") 10)))
 
 
-        (-> nodeEnter (.append "svg:circle")
+        (-> entering-nodes (.append "svg:circle")
           (.attr "r" 1e-6)
           (.style "fill" #(if (aget % "hidden-children") "lightsteelblue" "#fff")))
 
-        (-> nodeEnter (.append "svg:text")
+        (-> entering-nodes (.append "svg:text")
           (.attr (orientation :y-prop) #(if (or (aget % "children") (aget % "hidden-children")) -10 10))
           (.attr (orientation :dx-prop) ".35em")
           (.attr "text-anchor" #(if (or (aget % "children") (aget % "hidden-children")) "end" "start"))
           (.text #(aget % "name"))
           (.style "fill-opacity" 1e-6))
 
-        (-> nodeUpdate (.select "circle")
+        (-> updating-nodes (.select "circle")
           (.attr "r" 4.5)
           (.style "fill" #(if (aget % "hidden-children") "lightsteelblue" "#fff")))
 
-        (-> nodeUpdate (.select "text")
+        (-> updating-nodes (.select "text")
           (.style "fill-opacity" 1))
 
-        (-> nodeExit (.select "circle")
+        (-> exiting-nodes (.select "circle")
           (.attr "r" 1e-6))
 
-        (-> nodeExit (.select "text")
+        (-> exiting-nodes (.select "text")
           (.style "fill-opacity 1e-6"))
 
-;;  // Enter any new links at the parent's previous position.
+;;  // Enter any new links at source-node's previous position.
         (-> link (.enter) (.insert "svg:path" "g")
           (.attr "class" "link")
-          (.attr "d" #(let [o (js-obj "x" (aget source "x0") "y" (aget source "y0"))]
+          (.attr "d" #(let [o (js-obj "x" (aget source-node "x0") "y" (aget source-node "y0"))]
                         (draw-link (js-obj "source" o "target" o))))
           (.transition)
           (.duration duration)
@@ -147,10 +175,10 @@
           (.duration duration)
           (.attr "d" draw-link))
 
-;;  // Transition exiting nodes to the parent's new position.
+;;  // Transition exiting nodes to source-node's new position.
         (-> link (.exit) (.transition)
           (.duration duration)
-          (.attr "d" #(let [o (js-obj "x" (aget source "x") "y" (aget source "y"))]
+          (.attr "d" #(let [o (js-obj "x" (aget source-node "x") "y" (aget source-node "y"))]
                         (draw-link (js-obj "source" o "target" o))))
           (.remove))
 
@@ -160,13 +188,44 @@
           (aset node "y0" (aget node "y")))))
 
 
-(defn draw [json]
-  (let [root json
+
+(defn draw-control [command y]
+  (let [node (-> control-canvas (.append "svg:g")
+               (.attr "class" "node")
+               (.attr "transform" #(str "translate(0," y ")"))
+               (.attr "name" (name command))
+            ;   (.on "click" control-click-handler)
+               )
+        ]
+    
+    (-> node (.append "svg:circle")
+      (.attr "r" 4.5))
+    
+    (-> node (.append "svg:text")
+      (.attr "y" 10)
+      (.attr "dx" ".35em")
+      (.attr "text-anchor" "start")
+      (.text (name command))
+      (.style "fill-opacity" 1e-6))))
+
+
+(defn draw-controls []
+  (doseq [[command y] (map list [:left :right :leftmost :rightmost :down :up :root] [0 20 40 60 80 100 120])]
+    (draw-control command y)))
+
+
+
+(defn draw [data]
+  (draw-controls)
+  (let [root data
+        _ (aset root "x0" (/ tree-width 2))
+        _ (aset root "y0" 0)
+        
+        zipper (-> data json-zip)
+        
         tree (-> d3 (.-layout) (.tree)
                (.size (if (== orientation vertical) [tree-width tree-height] [tree-height tree-width])))]
-    (aset root "x0" (/ tree-width 2))
-    (aset root "y0" 0)
-                           
+    
 ;;  Initialize the display to show a few nodes.
     (doseq [child (aget root "children")]
       (toggle-all child))
@@ -177,6 +236,6 @@
       (toggle child)
       (toggle (aget (aget child "children") 0)))
     
-    (update root root tree)))
+    (redraw root zipper tree)))
 
 (.json d3 "flare.json" draw)
