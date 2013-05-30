@@ -109,10 +109,56 @@
                               (aget d "id"))))
 
         entering-nodes (-> node (.enter) (.append "svg:g"))
-
+        
+        ;; Enter any new nodes at source-node's previous position.
+        node-enter (fn [node]
+                     (-> node
+                       (.attr "class" "node")
+                       (.attr "transform" #(str "translate(" (aget source-node (orientation :x0-prop)) "," (aget source-node (orientation :y0-prop)) ")"))
+                       (.on "click" click-handler))
+                     (let [circle (-> node (.append "svg:circle"))]
+                       (-> circle
+                         (.attr "r" 1e-6)
+                         (.style "fill" #(if (aget % "hidden-children") "lightsteelblue" "#fff"))))
+                     (let [text (-> node (.append "svg:text"))]
+                       (-> text
+                         (.attr (orientation :y-prop) #(if (or (aget % "children") (aget % "hidden-children")) -10 10))
+                         (.attr (orientation :dx-prop) ".35em")
+                         (.attr "text-anchor" #(if (or (aget % "children") (aget % "hidden-children")) "end" "start"))
+                         (.text #(aget % "name"))
+                         (.style "fill-opacity" 1e-6))))
+        
         updating-nodes-transition (-> node (.transition))
-
+        
+        ;; Transition nodes to their new position.
+        node-transition-update (fn [transition]
+                                 (-> transition
+                                   (.duration duration)
+                                   (.attr "transform" #(str "translate(" (aget % (orientation :x-prop)) "," (aget % (orientation :y-prop)) ")")))
+                                 (let [circle (-> transition (.select "circle"))]
+                                   (-> circle
+                                     (.attr "r" 4.5)
+                                     (.style "fill" #(if (aget % "hidden-children") "lightsteelblue" "#fff"))))
+                                 (let [text (-> transition (.select "text"))]
+                                   (-> text
+                                     (.style "fill-opacity" 1))))
+                                 
+        
         exiting-nodes-transition (-> node (.exit) (.transition)) ;; externed exit!
+        
+        ;; Transition exiting nodes to source-node's new position.
+        node-transition-exit (fn [transition]
+                               (-> transition 
+                                 (.duration duration)
+                                 (.attr "transform" #(str "translate(" (aget source-node (orientation :x-prop)) "," (aget source-node (orientation :y-prop)) ")"))
+                                 (.remove))
+                               (let [circle (-> transition (.select "circle"))]
+                                 (-> circle
+                                   (.attr "r" 1e-6)))
+                               (let [text (-> transition (.select "text"))]
+                                 (-> text
+                                   (.style "fill-opacity 1e-6"))))
+                                 
         
         ;; Update the links…
         link (-> tree-canvas (.selectAll "path.link")
@@ -120,79 +166,56 @@
         
         entering-links (-> link (.enter) (.insert "svg:path" "g"))
         
+        ;; Enter any new links at source-node's previous position.
+        link-enter (fn [link]
+                     (-> link
+                       (.attr "class" "link")
+                       (.attr "d" #(let [o (js-obj "x" (aget source-node "x0") "y" (aget source-node "y0"))]
+                                     (draw-link (js-obj "source" o "target" o))))))
+        
         entering-links-transition (-> entering-links (.transition))
+        
+        link-transition-enter (fn [transition]
+                                (-> transition
+                                  (.duration duration)
+                                  (.attr "d" draw-link)))
         
         updating-links-transition (-> link (.transition))
         
-        exiting-links-transition (-> link (.exit) (.transition))]
+        ;; Transition links to their new position.
+        link-transition-update (fn [transition]
+                                 (-> transition
+                                   (.duration duration)
+                                   (.attr "d" draw-link)))
+        
+        exiting-links-transition (-> link (.exit) (.transition))
+        
+        ;; Transition exiting links to source-node's new position.
+        link-transition-exit (fn [transition]
+                               (-> transition
+                                 (.duration duration)
+                                 (.attr "d" #(let [o (js-obj "x" (aget source-node "x") "y" (aget source-node "y"))]
+                                               (draw-link (js-obj "source" o "target" o))))
+                                 (.remove)))]
     
-    
-    ;; Enter any new nodes at source-node's previous position.
-    (-> entering-nodes
-      (.attr "class" "node")
-      (.attr "transform" #(str "translate(" (aget source-node (orientation :x0-prop)) "," (aget source-node (orientation :y0-prop)) ")"))
-      (.on "click" click-handler))
     
     ;; Normalize for fixed-depth.
     (doseq [node nodes]
       #(aset % (orientation :y-prop) (* (aget % "depth") 10)))
     
-    (-> entering-nodes (.append "svg:circle")
-      (.attr "r" 1e-6)
-      (.style "fill" #(if (aget % "hidden-children") "lightsteelblue" "#fff")))
+    (-> entering-nodes node-enter)
     
-    (-> entering-nodes (.append "svg:text")
-      (.attr (orientation :y-prop) #(if (or (aget % "children") (aget % "hidden-children")) -10 10))
-      (.attr (orientation :dx-prop) ".35em")
-      (.attr "text-anchor" #(if (or (aget % "children") (aget % "hidden-children")) "end" "start"))
-      (.text #(aget % "name"))
-      (.style "fill-opacity" 1e-6))
+    (-> updating-nodes-transition node-transition-update)
     
-    ;; Transition nodes to their new position.
-    (-> updating-nodes-transition
-      (.duration duration)
-      (.attr "transform" #(str "translate(" (aget % (orientation :x-prop)) "," (aget % (orientation :y-prop)) ")")))
+    (-> exiting-nodes-transition node-transition-exit)
     
-    (-> updating-nodes-transition (.select "circle")
-      (.attr "r" 4.5)
-      (.style "fill" #(if (aget % "hidden-children") "lightsteelblue" "#fff")))
+    (-> entering-links link-enter)
     
-    (-> updating-nodes-transition (.select "text")
-      (.style "fill-opacity" 1))
+    (-> entering-links-transition link-transition-enter)
     
-    ;; Transition exiting nodes to source-node's new position.
-    (-> exiting-nodes-transition 
-      (.duration duration)
-      (.attr "transform" #(str "translate(" (aget source-node (orientation :x-prop)) "," (aget source-node (orientation :y-prop)) ")"))
-      (.remove))
+    (-> updating-links-transition link-transition-update)
     
-    (-> exiting-nodes-transition (.select "circle")
-      (.attr "r" 1e-6))
-    
-    (-> exiting-nodes-transition (.select "text")
-      (.style "fill-opacity 1e-6"))
-    
-    ;; Enter any new links at source-node's previous position.
-    (-> entering-links
-      (.attr "class" "link")
-      (.attr "d" #(let [o (js-obj "x" (aget source-node "x0") "y" (aget source-node "y0"))]
-                    (draw-link (js-obj "source" o "target" o)))))
-    
-    (-> entering-links-transition
-      (.duration duration)
-      (.attr "d" draw-link))
-    
-    ;; Transition links to their new position.
-    (-> updating-links-transition
-      (.duration duration)
-      (.attr "d" draw-link))
-    
-    ;; Transition exiting links to source-node's new position.
-    (-> exiting-links-transition
-      (.duration duration)
-      (.attr "d" #(let [o (js-obj "x" (aget source-node "x") "y" (aget source-node "y"))]
-                    (draw-link (js-obj "source" o "target" o))))
-      (.remove))
+    (-> exiting-links-transition link-transition-exit)
     
     ;; Stash the old positions for transition.
     (doseq [node nodes]
