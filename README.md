@@ -1,6 +1,7 @@
 # tree
 
-A direct translation of @mbostock's d3.layout.tree demo ( http://mbostock.github.io/d3/talk/20111018/tree.html ) into ClojureScript using strokes ( https://github.com/dribnet/strokes )
+@mbostock's d3.layout.tree demo ( http://mbostock.github.io/d3/talk/20111018/tree.html ) implemented into ClojureScript using strokes ( https://github.com/dribnet/strokes )
+and refactored into a "reuseable chart" as described in http://weblog.bocoup.com/reusability-with-d3/
 
 ## Usage
 
