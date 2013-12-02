@@ -1,7 +1,7 @@
 (ns tree.core
       (:require [clojure.zip :as zip]
-                [strokes :refer [d3]]))
-
+                [strokes :refer [d3]]
+                ))
 
 (defn log [& more]
   (.log js/console (apply str more)))
@@ -60,7 +60,6 @@
       (aset d "children" (aget d "hidden-children"))
       (aset d "hidden-children" nil))))
 
-
 (defn toggle-all [d]
   (when (aget d "children")
       (doseq [child (aget d "children")]
@@ -88,22 +87,17 @@
 
 ;; redraw refactoring as in http://weblog.bocoup.com/reusability-with-d3
 
-(defn redraw-nodes [source-node tree nodes duration click-handler]
+;; source-node is the data node on which the event was triggered
+(defn redraw-nodes [node-selection source-node duration click-handler]
   (let [fill-color #(if (aget % "hidden-children") "lightsteelblue" "#fff")
         
-        node (-> tree-canvas (.selectAll "g.node")
-               (.data nodes (fn [d]
-                              (when (not (aget d "id"))
-                                  (aset d "id" (get-next-node-id)))
-                              (aget d "id"))))
-        
-        entering (-> node (.enter) (.append "svg:g"))
+        entering (-> node-selection (.enter) (.append "svg:g"))
         
         ;; Enter any new nodes at source-node's previous position.
         enter (fn [node]
                      (-> node
                        (.attr "class" "node")
-                       (.attr "transform" #(str "translate(" (aget source-node (orientation :x0-prop)) "," (aget source-node (orientation :y0-prop)) ")"))
+                       (.attr "transform" (fn [d] (str "translate(" (aget source-node (orientation :x0-prop)) "," (aget source-node (orientation :y0-prop)) ")")))
                        (.on "click" click-handler))
                      (let [circle (-> node (.append "svg:circle"))]
                        (-> circle
@@ -111,19 +105,19 @@
                          (.style "fill" fill-color)))
                      (let [text (-> node (.append "svg:text"))]
                        (-> text
-                         (.attr (orientation :y-prop) #(if (or (aget % "children") (aget % "hidden-children")) -10 10))
+                         (.attr (orientation :y-prop) (fn [d] (if (or (aget d "children") (aget d "hidden-children")) -10 10)))
                          (.attr (orientation :dx-prop) ".35em")
                          (.attr "text-anchor" #(if (or (aget % "children") (aget % "hidden-children")) "end" "start"))
                          (.text #(aget % "name"))
                          (.style "fill-opacity" 1e-6))))
         
-        updating-transition (-> node (.transition))
+        updating-transition (-> node-selection (.transition))
         
         ;; Transition nodes to their new position.
         transition-update (fn [transition]
                                  (-> transition
                                    (.duration duration)
-                                   (.attr "transform" #(str "translate(" (aget % (orientation :x-prop)) "," (aget % (orientation :y-prop)) ")")))
+                                   (.attr "transform" (fn [d] (str "translate(" (aget d (orientation :x-prop)) "," (aget d (orientation :y-prop)) ")"))))
                                  (let [circle (-> transition (.select "circle"))]
                                    (-> circle
                                      (.attr "r" 4.5)
@@ -133,13 +127,13 @@
                                      (.style "fill-opacity" 1))))
                                  
         
-        exiting-transition (-> node (.exit) (.transition)) ;; externed exit!
+        exiting-transition (-> node-selection (.exit) (.transition)) ;; externed exit!
         
         ;; Transition exiting nodes to source-node's new position.
         transition-exit (fn [transition]
                                (-> transition 
                                  (.duration duration)
-                                 (.attr "transform" #(str "translate(" (aget source-node (orientation :x-prop)) "," (aget source-node (orientation :y-prop)) ")"))
+                                 (.attr "transform" (fn [d] (str "translate(" (aget source-node (orientation :x-prop)) "," (aget source-node (orientation :y-prop)) ")")))
                                  (.remove))
                                (let [circle (-> transition (.select "circle"))]
                                  (-> circle
@@ -155,11 +149,8 @@
     (-> exiting-transition transition-exit)))
 
 
-(defn redraw-links [source-node tree nodes duration]
-  (let [link (-> tree-canvas (.selectAll "path.link")
-               (.data (.links tree nodes) #(aget (aget % "target") "id")))
-        
-        entering (-> link (.enter) (.insert "svg:path" "g"))
+(defn redraw-links [link-selection source-node duration]
+  (let [entering (-> link-selection (.enter) (.insert "svg:path" "g"))
         
         ;; Enter any new links at source-node's previous position.
         enter (fn [link]
@@ -170,20 +161,15 @@
         
         entering-transition (-> entering (.transition))
         
-        transition-enter (fn [transition]
-                                (-> transition
-                                  (.duration duration)
-                                  (.attr "d" draw-link)))
+        updating-transition (-> link-selection (.transition))
         
-        updating-transition (-> link (.transition))
-        
-        ;; Transition links to their new position.
+        ;; Transition links to their new position (for entering-transition and updating-transition)
         transition-update (fn [transition]
                                  (-> transition
                                    (.duration duration)
                                    (.attr "d" draw-link)))
         
-        exiting-transition (-> link (.exit) (.transition))
+        exiting-transition (-> link-selection (.exit) (.transition))
         
         ;; Transition exiting links to source-node's new position.
         transition-exit (fn [transition]
@@ -195,7 +181,7 @@
     
     (-> entering enter)
     
-    (-> entering-transition transition-enter)
+    (-> entering-transition transition-update)
     
     (-> updating-transition transition-update)
     
@@ -203,30 +189,39 @@
     
 
         
-(defn redraw [source-node zipper tree]
+(defn redraw [source-node zipper tree-layout]
   
   (let [duration (if (and (aget d3 "event") (aget (aget d3 "event") "altKey"))
                    5000
                    500)
         
-        click-handler (fn [d] (toggle d) (redraw d zipper tree))
+        click-handler (fn [d] (toggle d) (redraw d zipper tree-layout))
         
         root (zip/root zipper)
         
         ;; Compute the new tree layout.
-        nodes (.reverse ((aget tree "nodes") root))]
+        nodes (.reverse ((aget tree-layout "nodes") root))
+        
+        node-selection (-> tree-canvas (.selectAll "g.node")
+                         (.data nodes (fn [d]
+                                        (when (not (aget d "id"))
+                                          (aset d "id" (get-next-node-id)))
+                                        (aget d "id"))))
+        
+        link-selection (-> tree-canvas (.selectAll "path.link")
+                         (.data (.links tree-layout nodes) #(aget (aget % "target") "id")))]
         
     ;; Normalize for fixed-depth.
     (doseq [node nodes]
-      #(aset % (orientation :y-prop) (* (aget % "depth") 10)))
+      (aset node (orientation :y-prop) (* (aget node "depth") 180)))
+    
+    (redraw-nodes node-selection source-node duration click-handler)
+    (redraw-links link-selection source-node duration)
     
     ;; Stash the old positions for transition.
     (doseq [node nodes]
       (aset node "x0" (aget node "x"))
-      (aset node "y0" (aget node "y")))
-    
-    (redraw-nodes source-node tree nodes duration click-handler)
-    (redraw-links source-node tree nodes duration)))
+      (aset node "y0" (aget node "y")))))
 
 
 
@@ -247,7 +242,7 @@
       (.attr "dx" ".35em")
       (.attr "text-anchor" "start")
       (.text (name command))
-      (.style "fill-opacity" 1e-6))))
+      (.style "fill-opacity" 1))))
 
 
 (defn draw-controls []
@@ -264,7 +259,7 @@
         
         zipper (-> data json-zip)
         
-        tree (-> d3 (.-layout) (.tree)
+        tree-layout (-> d3 (.-layout) (.tree)
                (.size (if (== orientation vertical) [tree-width tree-height] [tree-height tree-width])))]
     
     ; Initialize the display to show a few nodes.
@@ -277,6 +272,6 @@
       (toggle child)
       (toggle (aget (aget child "children") 0)))
     
-    (redraw root zipper tree)))
+    (redraw root zipper tree-layout)))
 
 (.json d3 "flare.json" draw)
