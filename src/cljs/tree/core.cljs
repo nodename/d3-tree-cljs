@@ -21,12 +21,14 @@
 (def tree-height (- tree-canvas-height (margin :top) (margin :bottom)))
 
 
+;; allowed values for orientation: vertical or horizontal
 (def vertical {:x-prop "x" :y-prop "y" :x0-prop "x0" :y0-prop "y0" :dx-prop "dx"})
 (def horizontal {:x-prop "y" :y-prop "x" :x0-prop "y0" :y0-prop "x0" :dx-prop "dy"})
 
 (def orientation vertical)
 
 
+;; allowed values for draw-link: line-segment or bezier
 (def line (-> d3 (.-svg) (.line) (.x (fn [d] (aget d (orientation :x-prop)))) (.y (fn [d] (aget d (orientation :y-prop))))))
 (def line-segment (fn [spec]
             (let [source (aget spec "source")
